@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'dart:async';
 import '../utils.dart';
 import 'app_text_style.dart';
 import '../../features/daily_activities/models/event.dart';
@@ -341,11 +342,12 @@ class UnifiedCard extends StatelessWidget {
 }
 
 /// Specialized card for different entity types
-class EventCard extends StatelessWidget {
+class EventCard extends StatefulWidget {
   final Event event;
   final VoidCallback? onEdit;
   final VoidCallback? onDelete;
   final VoidCallback? onStatusChange;
+  final Future<bool> Function(EventStatus)? onStatusChangeWithValidation;
   final double elevation;
   final Color? cardColor;
   final bool isSelectionMode;
@@ -358,6 +360,7 @@ class EventCard extends StatelessWidget {
     this.onEdit,
     this.onDelete,
     this.onStatusChange,
+    this.onStatusChangeWithValidation,
     this.elevation = 3,
     this.cardColor,
     this.isSelectionMode = false,
@@ -366,15 +369,62 @@ class EventCard extends StatelessWidget {
   });
 
   @override
+  State<EventCard> createState() => _EventCardState();
+}
+
+class _EventCardState extends State<EventCard> {
+  Timer? _timer;
+
+  @override
+  void initState() {
+    super.initState();
+    // Update every 30 seconds for ongoing events, every minute for others
+    _startTimer();
+  }
+
+  @override
+  void didUpdateWidget(EventCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.event.status != widget.event.status ||
+        oldWidget.event.startTime != widget.event.startTime ||
+        oldWidget.event.endTime != widget.event.endTime) {
+      // Event status or time changed, restart timer with appropriate interval
+      _startTimer();
+    }
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  void _startTimer() {
+    _timer?.cancel();
+
+    // For ongoing events, update every 30 seconds for more responsive timer
+    // For other events, update every minute
+    final interval = widget.event.status == EventStatus.ongoing
+        ? const Duration(seconds: 30)
+        : const Duration(minutes: 1);
+
+    _timer = Timer.periodic(interval, (_) {
+      if (mounted) {
+        setState(() {});
+      }
+    });
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final statusColor = _getEventStatusColor(event.status);
-    final defaultCardColor = cardColor ?? Theme.of(context).cardColor;
-    final canEditEvent = event.canEdit;
+    final statusColor = _getEventStatusColor(widget.event.status);
+    final defaultCardColor = widget.cardColor ?? Theme.of(context).cardColor;
+    final canEditEvent = widget.event.canEdit;
 
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       child: Card(
-        elevation: elevation,
+        elevation: widget.elevation,
         color: defaultCardColor,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(16),
@@ -384,21 +434,21 @@ class EventCard extends StatelessWidget {
           ),
         ),
         child: InkWell(
-          onTap: isSelectionMode
-              ? () => onSelectionChanged?.call(!isSelected)
-              : (canEditEvent && onEdit != null
+          onTap: widget.isSelectionMode
+              ? () => widget.onSelectionChanged?.call(!widget.isSelected)
+              : (canEditEvent && widget.onEdit != null
                     ? () {
                         HapticFeedback.lightImpact();
-                        onEdit!();
+                        widget.onEdit!();
                       }
                     : null),
-          onLongPress: isSelectionMode
+          onLongPress: widget.isSelectionMode
               ? null
-              : () => onSelectionChanged?.call(!isSelected),
+              : () => widget.onSelectionChanged?.call(!widget.isSelected),
           borderRadius: BorderRadius.circular(16),
           child: Container(
             padding: const EdgeInsets.all(16),
-            decoration: isSelected
+            decoration: widget.isSelected
                 ? BoxDecoration(
                     borderRadius: BorderRadius.circular(16),
                     border: Border.all(
@@ -414,11 +464,11 @@ class EventCard extends StatelessWidget {
                 Row(
                   children: [
                     // Selection checkbox
-                    if (isSelectionMode) ...[
+                    if (widget.isSelectionMode) ...[
                       Checkbox(
-                        value: isSelected,
+                        value: widget.isSelected,
                         onChanged: (value) =>
-                            onSelectionChanged?.call(value ?? false),
+                            widget.onSelectionChanged?.call(value ?? false),
                         materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
                       ),
                       const SizedBox(width: 8),
@@ -429,7 +479,7 @@ class EventCard extends StatelessWidget {
                         children: [
                           Expanded(
                             child: Text(
-                              event.title,
+                              widget.event.title,
                               style: AppTextStyles.of(context).subtitle1
                                   .copyWith(
                                     fontWeight: FontWeight.w600,
@@ -443,7 +493,7 @@ class EventCard extends StatelessWidget {
                             ),
                           ),
                           // Edit lock indicator
-                          if (!canEditEvent && !isSelectionMode) ...[
+                          if (!canEditEvent && !widget.isSelectionMode) ...[
                             const SizedBox(width: 8),
                             Icon(
                               Icons.lock,
@@ -456,7 +506,7 @@ class EventCard extends StatelessWidget {
                     ),
                     const SizedBox(width: 12),
                     GestureDetector(
-                      onTap: onStatusChange,
+                      onTap: () => _showStatusChangeDialog(context),
                       child: Container(
                         padding: const EdgeInsets.symmetric(
                           horizontal: 10,
@@ -474,12 +524,12 @@ class EventCard extends StatelessWidget {
                           mainAxisSize: MainAxisSize.min,
                           children: [
                             Text(
-                              event.status.emoji,
+                              widget.event.status.emoji,
                               style: const TextStyle(fontSize: 12),
                             ),
                             const SizedBox(width: 4),
                             Text(
-                              event.status.displayName,
+                              widget.event.status.displayName,
                               style: TextStyle(
                                 color: statusColor,
                                 fontSize: 12,
@@ -494,10 +544,10 @@ class EventCard extends StatelessWidget {
                 ),
 
                 // Line 2: Description
-                if (event.description.isNotEmpty) ...[
+                if (widget.event.description.isNotEmpty) ...[
                   const SizedBox(height: 8),
                   Text(
-                    event.description,
+                    widget.event.description,
                     style: AppTextStyles.of(context).body1.copyWith(
                       color: Theme.of(
                         context,
@@ -525,7 +575,10 @@ class EventCard extends StatelessWidget {
                     const SizedBox(width: 6),
                     Expanded(
                       child: Text(
-                        _formatTimePeriod(event.startTime, event.endTime),
+                        _formatTimePeriod(
+                          widget.event.startTime,
+                          widget.event.endTime,
+                        ),
                         style: AppTextStyles.of(context).body1.copyWith(
                           color: Theme.of(
                             context,
@@ -543,7 +596,8 @@ class EventCard extends StatelessWidget {
                 Row(
                   children: [
                     // Category (left side)
-                    if (event.category != null && event.category!.isNotEmpty)
+                    if (widget.event.category != null &&
+                        widget.event.category!.isNotEmpty)
                       Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
@@ -567,7 +621,7 @@ class EventCard extends StatelessWidget {
                               ),
                             ),
                             child: Text(
-                              event.category!,
+                              widget.event.category!,
                               style: TextStyle(
                                 color: statusColor.withValues(alpha: 0.9),
                                 fontSize: 12,
@@ -585,7 +639,8 @@ class EventCard extends StatelessWidget {
                     _buildTimeCondition(context),
 
                     // Spacer to keep balance if no category
-                    if (event.category == null || event.category!.isEmpty)
+                    if (widget.event.category == null ||
+                        widget.event.category!.isEmpty)
                       const Spacer(),
                   ],
                 ),
@@ -599,13 +654,13 @@ class EventCard extends StatelessWidget {
 
   Widget _buildTimeCondition(BuildContext context) {
     final now = DateTime.now();
-    final eventStart = event.startTime;
-    final eventEnd = event.endTime;
+    final eventStart = widget.event.startTime;
+    final eventEnd = widget.event.endTime;
 
     // Calculate time difference
     final timeDifference = eventStart.difference(now);
     final isEventInFuture = timeDifference.inMinutes > 0;
-    final isEventActive = event.status == EventStatus.ongoing;
+    final isEventActive = widget.event.status == EventStatus.ongoing;
 
     String timeText;
     Color timeColor;
@@ -648,7 +703,7 @@ class EventCard extends StatelessWidget {
       timeText = '$elapsedText / $totalText elapsed';
       timeColor = Colors.green;
       timeIcon = Icons.play_circle_filled;
-    } else if (event.status == EventStatus.completed) {
+    } else if (widget.event.status == EventStatus.completed) {
       // Event is completed
       final actualDuration = eventEnd != null
           ? eventEnd.difference(eventStart)
@@ -701,6 +756,118 @@ class EventCard extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  void _showStatusChangeDialog(BuildContext context) {
+    final currentStatus = widget.event.status;
+    final availableStatuses = EventStatus.values
+        .where((status) => status != currentStatus)
+        .toList();
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Change Status'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              'Current status: ${currentStatus.emoji} ${currentStatus.displayName}',
+            ),
+            const SizedBox(height: 16),
+            const Text('Select new status:'),
+            const SizedBox(height: 12),
+            ...availableStatuses.map(
+              (status) => ListTile(
+                leading: Text(
+                  status.emoji,
+                  style: const TextStyle(fontSize: 20),
+                ),
+                title: Text(status.displayName),
+                subtitle: _getStatusDescription(currentStatus, status),
+                onTap: () => _handleStatusChange(context, status),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancel'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget? _getStatusDescription(
+    EventStatus currentStatus,
+    EventStatus newStatus,
+  ) {
+    if (currentStatus == EventStatus.notStarted &&
+        newStatus == EventStatus.ongoing) {
+      return const Text(
+        'Will start now and update time frame',
+        style: TextStyle(fontSize: 12, color: Colors.blue),
+      );
+    } else if (newStatus == EventStatus.completed) {
+      return const Text(
+        'Mark as completed',
+        style: TextStyle(fontSize: 12, color: Colors.green),
+      );
+    }
+    return null;
+  }
+
+  void _handleStatusChange(BuildContext context, EventStatus newStatus) async {
+    Navigator.of(context).pop();
+
+    if (widget.onStatusChangeWithValidation != null) {
+      // Show loading indicator
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => const Center(child: CircularProgressIndicator()),
+      );
+
+      try {
+        final success = await widget.onStatusChangeWithValidation!(newStatus);
+        Navigator.of(context).pop(); // Close loading
+
+        if (!success) {
+          // Show error message - the error is already set in the view model
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: const Text('Cannot change status due to conflicts'),
+              backgroundColor: Colors.red,
+              action: SnackBarAction(
+                label: 'OK',
+                textColor: Colors.white,
+                onPressed: () {},
+              ),
+            ),
+          );
+        } else {
+          // Show success message
+          String message = 'Status updated successfully';
+          if (widget.event.status == EventStatus.notStarted &&
+              newStatus == EventStatus.ongoing) {
+            message = 'Event started! Time frame updated to current time.';
+          }
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(message), backgroundColor: Colors.green),
+          );
+        }
+      } catch (e) {
+        Navigator.of(context).pop(); // Close loading
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
+        );
+      }
+    } else if (widget.onStatusChange != null) {
+      // Fallback to simple status change
+      widget.onStatusChange!();
+    }
   }
 
   static String _formatTimePeriod(DateTime startTime, DateTime? endTime) {
@@ -762,7 +929,7 @@ class EventCard extends StatelessWidget {
   }
 }
 
-class NoteCard extends StatelessWidget {
+class NoteCard extends StatefulWidget {
   final Note note;
   final VoidCallback? onEdit;
   final VoidCallback? onDelete;
@@ -783,6 +950,45 @@ class NoteCard extends StatelessWidget {
   });
 
   @override
+  State<NoteCard> createState() => _NoteCardState();
+}
+
+class _NoteCardState extends State<NoteCard> {
+  Timer? _timer;
+
+  @override
+  void initState() {
+    super.initState();
+    _startTimer();
+  }
+
+  @override
+  void didUpdateWidget(NoteCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.note.status != widget.note.status ||
+        oldWidget.note.updatedAt != widget.note.updatedAt) {
+      _startTimer();
+    }
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  void _startTimer() {
+    _timer?.cancel();
+
+    // Update every minute for time-sensitive status changes
+    _timer = Timer.periodic(const Duration(minutes: 1), (_) {
+      if (mounted) {
+        setState(() {});
+      }
+    });
+  }
+
+  @override
   Widget build(BuildContext context) {
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
@@ -792,15 +998,15 @@ class NoteCard extends StatelessWidget {
         color: Theme.of(context).cardColor,
         child: InkWell(
           borderRadius: BorderRadius.circular(16),
-          onTap: isSelectionMode
-              ? () => onSelectionChanged?.call(!isSelected)
-              : onEdit,
-          onLongPress: isSelectionMode
+          onTap: widget.isSelectionMode
+              ? () => widget.onSelectionChanged?.call(!widget.isSelected)
+              : widget.onEdit,
+          onLongPress: widget.isSelectionMode
               ? null
-              : () => onSelectionChanged?.call(!isSelected),
+              : () => widget.onSelectionChanged?.call(!widget.isSelected),
           child: Container(
             padding: const EdgeInsets.all(16),
-            decoration: isSelected
+            decoration: widget.isSelected
                 ? BoxDecoration(
                     borderRadius: BorderRadius.circular(16),
                     border: Border.all(
@@ -816,11 +1022,11 @@ class NoteCard extends StatelessWidget {
                 Row(
                   children: [
                     // Selection checkbox
-                    if (isSelectionMode) ...[
+                    if (widget.isSelectionMode) ...[
                       Checkbox(
-                        value: isSelected,
+                        value: widget.isSelected,
                         onChanged: (value) =>
-                            onSelectionChanged?.call(value ?? false),
+                            widget.onSelectionChanged?.call(value ?? false),
                         materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
                       ),
                       const SizedBox(width: 8),
@@ -829,7 +1035,7 @@ class NoteCard extends StatelessWidget {
                     // Title
                     Expanded(
                       child: Text(
-                        note.title,
+                        widget.note.title,
                         style: AppTextStyles.of(context).subtitle1.copyWith(
                           fontWeight: FontWeight.w600,
                           fontSize: 16,
@@ -843,10 +1049,10 @@ class NoteCard extends StatelessWidget {
                 ),
 
                 // Line 2: Content preview - Display all words
-                if (note.content.isNotEmpty) ...[
+                if (widget.note.content.isNotEmpty) ...[
                   const SizedBox(height: 6),
                   Text(
-                    note.content,
+                    widget.note.content,
                     style: AppTextStyles.of(context).body1.copyWith(
                       color: Colors.grey.shade600,
                       fontSize: 14,
@@ -857,25 +1063,21 @@ class NoteCard extends StatelessWidget {
                   ),
                 ],
 
-                // Line 3: Word count and date info
+                // Line 3: Status-based time display
                 const SizedBox(height: 12),
                 Row(
                   children: [
                     Icon(
-                      Icons.schedule,
+                      _getNoteStatusIcon(widget.note.status),
                       size: 16,
-                      color: Theme.of(
-                        context,
-                      ).textTheme.bodyMedium?.color?.withValues(alpha: 0.6),
+                      color: _getNoteStatusColor(widget.note.status),
                     ),
                     const SizedBox(width: 6),
                     Expanded(
                       child: Text(
-                        _formatWordCountAndDate(note),
+                        _buildNoteTimeDisplay(),
                         style: AppTextStyles.of(context).body1.copyWith(
-                          color: Theme.of(
-                            context,
-                          ).textTheme.bodyMedium?.color?.withValues(alpha: 0.6),
+                          color: _getNoteStatusColor(widget.note.status),
                           fontWeight: FontWeight.w600,
                           fontSize: 15,
                         ),
@@ -889,7 +1091,8 @@ class NoteCard extends StatelessWidget {
                 Row(
                   children: [
                     // Category (left side)
-                    if (note.category != null && note.category!.isNotEmpty)
+                    if (widget.note.category != null &&
+                        widget.note.category!.isNotEmpty)
                       Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
@@ -913,7 +1116,7 @@ class NoteCard extends StatelessWidget {
                               ),
                             ),
                             child: Text(
-                              note.category!,
+                              widget.note.category!,
                               style: TextStyle(
                                 color: Colors.grey.shade700,
                                 fontSize: 12,
@@ -928,10 +1131,11 @@ class NoteCard extends StatelessWidget {
                     const Spacer(),
 
                     // Tags (centered-right)
-                    if (note.tags != null && note.tags!.isNotEmpty)
+                    if (widget.note.tags != null &&
+                        widget.note.tags!.isNotEmpty)
                       Wrap(
                         spacing: 4,
-                        children: note.tags!.take(3).map((tag) {
+                        children: widget.note.tags!.take(3).map((tag) {
                           return Container(
                             padding: const EdgeInsets.symmetric(
                               horizontal: 8,
@@ -956,7 +1160,8 @@ class NoteCard extends StatelessWidget {
                       ),
 
                     // Spacer to keep balance if no category
-                    if (note.category == null || note.category!.isEmpty)
+                    if (widget.note.category == null ||
+                        widget.note.category!.isEmpty)
                       const Spacer(),
                   ],
                 ),
@@ -968,13 +1173,53 @@ class NoteCard extends StatelessWidget {
     );
   }
 
-  static String _formatWordCountAndDate(Note note) {
-    final wordCount = note.content.isNotEmpty
-        ? note.content.trim().split(RegExp(r'\s+')).length
-        : 0;
+  // Helper methods for note status
+  Color _getNoteStatusColor(NoteStatus status) {
+    switch (status) {
+      case NoteStatus.notStarted:
+        return Colors.grey;
+      case NoteStatus.active:
+        return Colors.blue;
+      case NoteStatus.done:
+        return Colors.green;
+      case NoteStatus.urgent:
+        return Colors.red;
+    }
+  }
 
-    final dateStr = _formatRelativeDate(note.updatedAt);
-    return '$wordCount ${wordCount == 1 ? 'word' : 'words'} • $dateStr';
+  IconData _getNoteStatusIcon(NoteStatus status) {
+    switch (status) {
+      case NoteStatus.notStarted:
+        return Icons.radio_button_unchecked;
+      case NoteStatus.active:
+        return Icons.access_time;
+      case NoteStatus.done:
+        return Icons.check_circle;
+      case NoteStatus.urgent:
+        return Icons.priority_high;
+    }
+  }
+
+  String _buildNoteTimeDisplay() {
+    final now = DateTime.now();
+
+    switch (widget.note.status) {
+      case NoteStatus.notStarted:
+        return 'Created ${_formatRelativeDate(widget.note.createdAt)}';
+      case NoteStatus.active:
+        final duration = now.difference(widget.note.updatedAt);
+        if (duration.inDays > 0) {
+          return 'Active for ${duration.inDays} ${duration.inDays == 1 ? 'day' : 'days'}';
+        } else if (duration.inHours > 0) {
+          return 'Active for ${duration.inHours} ${duration.inHours == 1 ? 'hour' : 'hours'}';
+        } else {
+          return 'Active for ${duration.inMinutes} ${duration.inMinutes == 1 ? 'minute' : 'minutes'}';
+        }
+      case NoteStatus.done:
+        return 'Completed ${_formatRelativeDate(widget.note.updatedAt)}';
+      case NoteStatus.urgent:
+        return 'Urgent - Updated ${_formatRelativeDate(widget.note.updatedAt)}';
+    }
   }
 
   static String _formatRelativeDate(DateTime date) {

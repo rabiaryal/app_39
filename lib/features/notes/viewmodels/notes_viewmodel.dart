@@ -24,18 +24,37 @@ class NotesState {
 // Notes notifier
 class NotesNotifier extends StateNotifier<NotesState> {
   bool _isRefreshing = false;
+  bool _isInitialized = false;
 
   NotesNotifier() : super(const NotesState()) {
-    // Load notes immediately without complex initialization
-    loadNotes();
+    // Don't load notes in constructor to avoid Riverpod state modification error
+    // Load notes will be called explicitly when needed
+  }
+
+  Future<void> _safeLoadNotes() async {
+    try {
+      await loadNotes();
+    } catch (e) {
+      print('Error in _safeLoadNotes: $e');
+      // Ensure loading state is false even if there's an error
+      state = state.copyWith(isLoading: false, error: e.toString());
+    }
   }
 
   Future<void> loadNotes() async {
-    state = state.copyWith(isLoading: true, error: null);
+    if (_isRefreshing) {
+      print('NotesNotifier: Already loading, skipping duplicate call');
+      return;
+    }
+
+    _isRefreshing = true;
 
     try {
+      state = state.copyWith(isLoading: true, error: null);
+
       // Wait briefly for Hive to be ready if needed
       if (!HiveService.isInitialized) {
+        print('NotesNotifier: Waiting for Hive initialization');
         await _waitForHive();
       }
 
@@ -45,6 +64,8 @@ class NotesNotifier extends StateNotifier<NotesState> {
     } catch (e) {
       print('Error loading notes: $e');
       state = state.copyWith(error: e.toString(), isLoading: false);
+    } finally {
+      _isRefreshing = false;
     }
   }
 

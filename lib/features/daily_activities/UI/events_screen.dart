@@ -659,9 +659,12 @@ class _EventsScreenState extends ConsumerState<EventsScreen>
                           ? null
                           : () =>
                                 AppNavigation.goToEditEvent(context, event.id),
-                      onStatusChange: _isSelectionMode
+                      onStatusChangeWithValidation: _isSelectionMode
                           ? null
-                          : () => _showStatusSelector(context, event),
+                          : (newStatus) => _updateEventStatusWithValidation(
+                              event.id,
+                              newStatus,
+                            ),
                     ),
                   ),
                 )
@@ -669,6 +672,47 @@ class _EventsScreenState extends ConsumerState<EventsScreen>
         ],
       ),
     );
+  }
+
+  Future<bool> _updateEventStatusWithValidation(
+    String eventId,
+    EventStatus newStatus,
+  ) async {
+    try {
+      // Call the enhanced updateEventStatus method that returns bool for success/failure
+      final success = await ref
+          .read(eventsProvider.notifier)
+          .updateEventStatus(eventId, newStatus);
+
+      if (success) {
+        // Show success feedback with enhanced messaging
+        final event = ref
+            .read(eventsProvider)
+            .events
+            .firstWhere((e) => e.id == eventId);
+        String message = 'Status updated to ${newStatus.displayName}';
+
+        if (event.status == EventStatus.notStarted &&
+            newStatus == EventStatus.ongoing) {
+          message = '🚀 Event started! Time frame adjusted to current time.';
+        } else if (newStatus == EventStatus.completed) {
+          message = '✅ Event completed successfully!';
+        }
+
+        AppSnackBar.showSuccess(context, message);
+        return true;
+      } else {
+        // Error message is already set in viewmodel, just show generic failure
+        final errorMessage =
+            ref.read(eventsProvider).error ??
+            'Cannot change status due to conflicts';
+        AppSnackBar.showError(context, errorMessage);
+        return false;
+      }
+    } catch (e) {
+      AppSnackBar.showError(context, 'Failed to update event: $e');
+      return false;
+    }
   }
 
   void _showStatusSelector(BuildContext context, Event event) {
@@ -684,13 +728,8 @@ class _EventsScreenState extends ConsumerState<EventsScreen>
         child: EventStatusSelector(
           currentStatus: event.status,
           onStatusChanged: (newStatus) async {
-            await ref
-                .read(eventsProvider.notifier)
-                .updateEventStatus(event.id, newStatus);
-            AppSnackBar.showSuccess(
-              context,
-              'Event status updated to ${newStatus.displayName}',
-            );
+            Navigator.pop(context); // Close the modal first
+            await _updateEventStatusWithValidation(event.id, newStatus);
           },
         ),
       ),

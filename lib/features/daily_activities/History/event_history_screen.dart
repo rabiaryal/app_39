@@ -17,6 +17,10 @@ class _EventHistoryScreenState extends ConsumerState<EventHistoryScreen> {
   final Set<String> _selectedItems = {};
   bool _isSelectionMode = false;
   bool _showSearchBar = false;
+  String _selectedFilter = 'all'; // all, completed, pending, today, week, month
+  DateTime? _startDate;
+  DateTime? _endDate;
+  bool _showFilters = false;
 
   @override
   void initState() {
@@ -31,14 +35,17 @@ class _EventHistoryScreenState extends ConsumerState<EventHistoryScreen> {
   Widget build(BuildContext context) {
     final eventsState = ref.watch(eventsProvider);
     final allEvents = eventsState.events;
-    final historyEvents = allEvents;
+    final historyEvents = _getFilteredEvents(allEvents);
     final filteredEvents = _searchQuery.isEmpty
         ? historyEvents
         : historyEvents.where((event) {
             final query = _searchQuery.toLowerCase();
             return event.title.toLowerCase().contains(query) ||
-                event.description.toLowerCase().contains(query);
+                event.description.toLowerCase().contains(query) ||
+                (event.category?.toLowerCase().contains(query) ?? false);
           }).toList();
+
+    final stats = _calculateStats(filteredEvents);
 
     return Scaffold(
       backgroundColor: Theme.of(context).scaffoldBackgroundColor,
@@ -63,6 +70,18 @@ class _EventHistoryScreenState extends ConsumerState<EventHistoryScreen> {
               onPressed: () {
                 setState(() {
                   _showSearchBar = !_showSearchBar;
+                  if (!_showSearchBar) _searchQuery = '';
+                });
+              },
+            ),
+            IconButton(
+              icon: Icon(
+                Icons.filter_list,
+                color: _showFilters ? Theme.of(context).primaryColor : null,
+              ),
+              onPressed: () {
+                setState(() {
+                  _showFilters = !_showFilters;
                 });
               },
             ),
@@ -98,20 +117,203 @@ class _EventHistoryScreenState extends ConsumerState<EventHistoryScreen> {
       ),
       body: Column(
         children: [
+          // Search Bar
           if (_showSearchBar)
             Container(
               padding: const EdgeInsets.all(16),
               child: TextField(
-                decoration: const InputDecoration(
-                  hintText: 'Search events...',
-                  prefixIcon: Icon(Icons.search),
-                  border: OutlineInputBorder(),
+                decoration: InputDecoration(
+                  hintText: 'Search events, categories...',
+                  prefixIcon: const Icon(Icons.search),
+                  suffixIcon: _searchQuery.isNotEmpty
+                      ? IconButton(
+                          icon: const Icon(Icons.clear),
+                          onPressed: () {
+                            setState(() {
+                              _searchQuery = '';
+                            });
+                          },
+                        )
+                      : null,
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
                 ),
                 onChanged: (query) {
                   setState(() {
                     _searchQuery = query;
                   });
                 },
+              ),
+            ),
+
+          // Filter Bar
+          if (_showFilters)
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              child: Column(
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: DropdownButtonFormField<String>(
+                          value: _selectedFilter,
+                          decoration: InputDecoration(
+                            labelText: 'Filter by',
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 8,
+                            ),
+                          ),
+                          items: const [
+                            DropdownMenuItem(
+                              value: 'all',
+                              child: Text('All Events'),
+                            ),
+                            DropdownMenuItem(
+                              value: 'completed',
+                              child: Text('Completed'),
+                            ),
+                            DropdownMenuItem(
+                              value: 'pending',
+                              child: Text('Pending'),
+                            ),
+                            DropdownMenuItem(
+                              value: 'today',
+                              child: Text('Today'),
+                            ),
+                            DropdownMenuItem(
+                              value: 'week',
+                              child: Text('This Week'),
+                            ),
+                            DropdownMenuItem(
+                              value: 'month',
+                              child: Text('This Month'),
+                            ),
+                          ],
+                          onChanged: (value) {
+                            setState(() {
+                              _selectedFilter = value ?? 'all';
+                            });
+                          },
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      OutlinedButton.icon(
+                        onPressed: () => _showDateRangePicker(),
+                        icon: const Icon(Icons.date_range, size: 18),
+                        label: Text(
+                          _startDate != null && _endDate != null
+                              ? '${DateTimeUtils.formatDate(_startDate!)} - ${DateTimeUtils.formatDate(_endDate!)}'
+                              : 'Date Range',
+                          style: const TextStyle(fontSize: 12),
+                        ),
+                      ),
+                    ],
+                  ),
+                  if (_startDate != null ||
+                      _endDate != null ||
+                      _selectedFilter != 'all')
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8),
+                      child: Row(
+                        children: [
+                          const Text(
+                            'Active filters: ',
+                            style: TextStyle(fontSize: 12),
+                          ),
+                          Expanded(
+                            child: Wrap(
+                              spacing: 4,
+                              children: [
+                                if (_selectedFilter != 'all')
+                                  Chip(
+                                    label: Text(
+                                      _selectedFilter.toUpperCase(),
+                                      style: const TextStyle(fontSize: 10),
+                                    ),
+                                    onDeleted: () =>
+                                        setState(() => _selectedFilter = 'all'),
+                                    materialTapTargetSize:
+                                        MaterialTapTargetSize.shrinkWrap,
+                                  ),
+                                if (_startDate != null && _endDate != null)
+                                  Chip(
+                                    label: Text(
+                                      '${DateTimeUtils.formatDate(_startDate!)} - ${DateTimeUtils.formatDate(_endDate!)}',
+                                      style: const TextStyle(fontSize: 10),
+                                    ),
+                                    onDeleted: () => setState(() {
+                                      _startDate = null;
+                                      _endDate = null;
+                                    }),
+                                    materialTapTargetSize:
+                                        MaterialTapTargetSize.shrinkWrap,
+                                  ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                ],
+              ),
+            ),
+
+          // Statistics Card
+          if (historyEvents.isNotEmpty && !_isSelectionMode)
+            Container(
+              margin: const EdgeInsets.all(16),
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Theme.of(context).cardColor,
+                borderRadius: BorderRadius.circular(16),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.05),
+                    blurRadius: 10,
+                    offset: const Offset(0, 4),
+                  ),
+                ],
+              ),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: _buildStatItem(
+                      'Total',
+                      stats['total'].toString(),
+                      Icons.event,
+                      Colors.blue,
+                    ),
+                  ),
+                  Expanded(
+                    child: _buildStatItem(
+                      'Completed',
+                      stats['completed'].toString(),
+                      Icons.check_circle,
+                      Colors.green,
+                    ),
+                  ),
+                  Expanded(
+                    child: _buildStatItem(
+                      'Pending',
+                      stats['pending'].toString(),
+                      Icons.pending,
+                      Colors.orange,
+                    ),
+                  ),
+                  Expanded(
+                    child: _buildStatItem(
+                      'Success Rate',
+                      '${stats['successRate']}%',
+                      Icons.trending_up,
+                      Colors.purple,
+                    ),
+                  ),
+                ],
               ),
             ),
           Expanded(
@@ -171,13 +373,20 @@ class _EventHistoryScreenState extends ConsumerState<EventHistoryScreen> {
 
                         return Card(
                           margin: const EdgeInsets.only(bottom: 12),
+                          elevation: 2,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
                           child: Dismissible(
                             key: Key(event.id),
                             direction: DismissDirection.endToStart,
                             background: Container(
                               alignment: Alignment.centerRight,
                               padding: const EdgeInsets.only(right: 20),
-                              color: Colors.red,
+                              decoration: BoxDecoration(
+                                color: Colors.red,
+                                borderRadius: BorderRadius.circular(12),
+                              ),
                               child: const Icon(
                                 Icons.delete,
                                 color: Colors.white,
@@ -190,21 +399,41 @@ class _EventHistoryScreenState extends ConsumerState<EventHistoryScreen> {
                               _deleteEvent(event);
                             },
                             child: ListTile(
+                              contentPadding: const EdgeInsets.all(16),
                               leading: _isSelectionMode
                                   ? Checkbox(
                                       value: isSelected,
                                       onChanged: (value) =>
                                           _toggleSelection(event.id),
                                     )
-                                  : CircleAvatar(
-                                      backgroundColor: event.isCompleted
-                                          ? Colors.green
-                                          : Colors.grey,
+                                  : Container(
+                                      width: 50,
+                                      height: 50,
+                                      decoration: BoxDecoration(
+                                        color: event.isCompleted
+                                            ? Colors.green.withOpacity(0.1)
+                                            : _getEventStatusColor(
+                                                event.status,
+                                              ).withOpacity(0.1),
+                                        borderRadius: BorderRadius.circular(12),
+                                        border: Border.all(
+                                          color: event.isCompleted
+                                              ? Colors.green
+                                              : _getEventStatusColor(
+                                                  event.status,
+                                                ),
+                                          width: 2,
+                                        ),
+                                      ),
                                       child: Icon(
                                         event.isCompleted
                                             ? Icons.check
-                                            : Icons.event,
-                                        color: Colors.white,
+                                            : _getEventStatusIcon(event.status),
+                                        color: event.isCompleted
+                                            ? Colors.green
+                                            : _getEventStatusColor(
+                                                event.status,
+                                              ),
                                       ),
                                     ),
                               title: Text(
@@ -213,19 +442,75 @@ class _EventHistoryScreenState extends ConsumerState<EventHistoryScreen> {
                                   decoration: event.isCompleted
                                       ? TextDecoration.lineThrough
                                       : null,
+                                  fontWeight: FontWeight.w600,
+                                  fontSize: 16,
                                 ),
                               ),
                               subtitle: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                                  Text(event.description),
-                                  const SizedBox(height: 4),
-                                  Text(
-                                    DateTimeUtils.formatDateTime(event.date),
-                                    style: TextStyle(
-                                      color: Colors.grey[600],
-                                      fontSize: 12,
+                                  if (event.description.isNotEmpty) ...[
+                                    const SizedBox(height: 4),
+                                    Text(
+                                      event.description,
+                                      maxLines: 2,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(fontSize: 14),
                                     ),
+                                  ],
+                                  const SizedBox(height: 8),
+                                  Row(
+                                    children: [
+                                      Icon(
+                                        Icons.access_time,
+                                        size: 14,
+                                        color: Colors.grey[600],
+                                      ),
+                                      const SizedBox(width: 4),
+                                      Text(
+                                        DateTimeUtils.formatDateTime(
+                                          event.date,
+                                        ),
+                                        style: TextStyle(
+                                          color: Colors.grey[600],
+                                          fontSize: 12,
+                                        ),
+                                      ),
+                                      if (event.category != null &&
+                                          event.category!.isNotEmpty) ...[
+                                        const SizedBox(width: 12),
+                                        Icon(
+                                          Icons.label,
+                                          size: 14,
+                                          color: Colors.grey[600],
+                                        ),
+                                        const SizedBox(width: 4),
+                                        Container(
+                                          padding: const EdgeInsets.symmetric(
+                                            horizontal: 8,
+                                            vertical: 2,
+                                          ),
+                                          decoration: BoxDecoration(
+                                            color: _getEventStatusColor(
+                                              event.status,
+                                            ).withOpacity(0.1),
+                                            borderRadius: BorderRadius.circular(
+                                              8,
+                                            ),
+                                          ),
+                                          child: Text(
+                                            event.category!,
+                                            style: TextStyle(
+                                              color: _getEventStatusColor(
+                                                event.status,
+                                              ),
+                                              fontSize: 11,
+                                              fontWeight: FontWeight.w500,
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ],
                                   ),
                                 ],
                               ),
@@ -237,7 +522,7 @@ class _EventHistoryScreenState extends ConsumerState<EventHistoryScreen> {
                                   ? null
                                   : IconButton(
                                       icon: const Icon(
-                                        Icons.delete,
+                                        Icons.delete_outline,
                                         color: Colors.red,
                                       ),
                                       onPressed: () => _deleteEvent(event),
@@ -380,6 +665,144 @@ class _EventHistoryScreenState extends ConsumerState<EventHistoryScreen> {
         context,
         'All event history cleared from local storage and syncing to cloud',
       );
+    }
+  }
+
+  // Helper Methods
+  List<Event> _getFilteredEvents(List<Event> allEvents) {
+    final now = DateTime.now();
+    List<Event> filtered = allEvents;
+
+    switch (_selectedFilter) {
+      case 'completed':
+        filtered = filtered.where((event) => event.isCompleted).toList();
+        break;
+      case 'pending':
+        filtered = filtered.where((event) => !event.isCompleted).toList();
+        break;
+      case 'today':
+        final today = DateTime(now.year, now.month, now.day);
+        final tomorrow = today.add(const Duration(days: 1));
+        filtered = filtered.where((event) {
+          return event.date.isAfter(
+                today.subtract(const Duration(seconds: 1)),
+              ) &&
+              event.date.isBefore(tomorrow);
+        }).toList();
+        break;
+      case 'week':
+        final weekStart = now.subtract(Duration(days: now.weekday - 1));
+        final weekEnd = weekStart.add(const Duration(days: 7));
+        filtered = filtered.where((event) {
+          return event.date.isAfter(
+                weekStart.subtract(const Duration(seconds: 1)),
+              ) &&
+              event.date.isBefore(weekEnd);
+        }).toList();
+        break;
+      case 'month':
+        final monthStart = DateTime(now.year, now.month, 1);
+        final monthEnd = DateTime(now.year, now.month + 1, 1);
+        filtered = filtered.where((event) {
+          return event.date.isAfter(
+                monthStart.subtract(const Duration(seconds: 1)),
+              ) &&
+              event.date.isBefore(monthEnd);
+        }).toList();
+        break;
+    }
+
+    // Apply date range filter if set
+    if (_startDate != null && _endDate != null) {
+      filtered = filtered.where((event) {
+        return event.date.isAfter(
+              _startDate!.subtract(const Duration(seconds: 1)),
+            ) &&
+            event.date.isBefore(_endDate!.add(const Duration(days: 1)));
+      }).toList();
+    }
+
+    // Sort by date (newest first)
+    filtered.sort((a, b) => b.date.compareTo(a.date));
+    return filtered;
+  }
+
+  Map<String, int> _calculateStats(List<Event> events) {
+    final total = events.length;
+    final completed = events.where((e) => e.isCompleted).length;
+    final pending = total - completed;
+    final successRate = total > 0 ? ((completed / total) * 100).round() : 0;
+
+    return {
+      'total': total,
+      'completed': completed,
+      'pending': pending,
+      'successRate': successRate,
+    };
+  }
+
+  Widget _buildStatItem(
+    String label,
+    String value,
+    IconData icon,
+    Color color,
+  ) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, color: color, size: 20),
+        const SizedBox(height: 4),
+        Text(
+          value,
+          style: TextStyle(
+            fontSize: 18,
+            fontWeight: FontWeight.bold,
+            color: color,
+          ),
+        ),
+        Text(label, style: const TextStyle(fontSize: 12, color: Colors.grey)),
+      ],
+    );
+  }
+
+  Future<void> _showDateRangePicker() async {
+    final DateTimeRange? range = await showDateRangePicker(
+      context: context,
+      firstDate: DateTime(2020),
+      lastDate: DateTime.now().add(const Duration(days: 365)),
+      initialDateRange: _startDate != null && _endDate != null
+          ? DateTimeRange(start: _startDate!, end: _endDate!)
+          : null,
+    );
+
+    if (range != null) {
+      setState(() {
+        _startDate = range.start;
+        _endDate = range.end;
+      });
+    }
+  }
+
+  // Helper methods for event status colors and icons
+  Color _getEventStatusColor(EventStatus status) {
+    switch (status) {
+      case EventStatus.completed:
+        return Colors.green;
+      case EventStatus.ongoing:
+        return Colors.blue;
+      case EventStatus.notStarted:
+        return Colors.orange;
+    }
+  }
+
+  IconData _getEventStatusIcon(EventStatus status) {
+    switch (status) {
+      case EventStatus.completed:
+        return Icons.check_circle;
+      case EventStatus.ongoing:
+        return Icons.play_circle_filled;
+      case EventStatus.notStarted:
+        return Icons.schedule;
     }
   }
 }

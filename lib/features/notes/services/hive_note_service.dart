@@ -3,7 +3,17 @@ import '../models/note.dart';
 import '../../../core/services/hive_service.dart';
 
 class NoteService {
-  static Box<Note> get _box => HiveService.notesBox;
+  static Box<Note>? _cachedBox;
+
+  static Box<Note> get _box {
+    try {
+      _cachedBox ??= HiveService.notesBox;
+      return _cachedBox!;
+    } catch (e) {
+      print('NoteService: Error accessing notesBox: $e');
+      rethrow;
+    }
+  }
 
   static Future<void> addNote(Note note) async {
     try {
@@ -48,13 +58,18 @@ class NoteService {
         return [];
       }
 
-      return box.values.toList()..sort((a, b) {
+      final notes = box.values.toList();
+      print('NoteService: Retrieved ${notes.length} notes from Hive');
+
+      notes.sort((a, b) {
         // Pinned notes first
         if (a.isPinned && !b.isPinned) return -1;
         if (!a.isPinned && b.isPinned) return 1;
         // Then by creation date (newest first)
         return b.createdAt.compareTo(a.createdAt);
       });
+
+      return notes;
     } catch (e) {
       // If Hive box is not ready, return empty list
       print('NoteService: Error getting notes, returning empty list: $e');

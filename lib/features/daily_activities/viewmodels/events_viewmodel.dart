@@ -262,18 +262,108 @@ class EventsNotifier extends StateNotifier<EventsState> {
     }
   }
 
-  Future<void> updateEventStatus(String id, EventStatus status) async {
+  Future<bool> updateEventStatus(String id, EventStatus status) async {
     try {
-      await EventService.updateEventStatus(id, status);
-      final updatedEvents = state.events.map((event) {
-        if (event.id == id)
-          return event.copyWith(status: status, updatedAt: DateTime.now());
-        return event;
-      }).toList();
-      state = state.copyWith(events: updatedEvents);
+      // Find the event being updated
+      final eventIndex = state.events.indexWhere((e) => e.id == id);
+      if (eventIndex == -1) {
+        throw Exception('Event not found');
+      }
+
+      final event = state.events[eventIndex];
+      final now = DateTime.now();
+
+      // If changing from notStarted to ongoing, check for conflicts and update time frame
+      if (event.status == EventStatus.notStarted &&
+          status == EventStatus.ongoing) {
+        // Check for concurrent ongoing events
+        final conflictingEvents = _checkConcurrentEvents(event, now);
+        if (conflictingEvents.isNotEmpty) {
+          // Return false to indicate conflict
+          state = state.copyWith(
+            error:
+                'Cannot start event: ${conflictingEvents.map((e) => e.title).join(", ")} are currently ongoing',
+          );
+          return false;
+        }
+
+        // Calculate new time frame based on current time and original duration
+        final originalDuration = event.endTime?.difference(event.startTime);
+        final newStartTime = now;
+        final newEndTime = originalDuration != null
+            ? now.add(originalDuration)
+            : event.endTime;
+
+        // Update event with new time frame and actual start time
+        final updatedEvent = event.copyWith(
+          status: status,
+          startTime: newStartTime,
+          endTime: newEndTime,
+          actualStartTime: now,
+          updatedAt: now,
+        );
+
+        await EventService.updateEvent(updatedEvent);
+
+        final updatedEvents = List<Event>.from(state.events);
+        updatedEvents[eventIndex] = updatedEvent;
+        state = state.copyWith(events: updatedEvents);
+
+        return true;
+      } else {
+        // Normal status update for other transitions
+        await EventService.updateEventStatus(id, status);
+        final updatedEvents = state.events.map((event) {
+          if (event.id == id) {
+            final updateData = <String, dynamic>{
+              'status': status,
+              'updatedAt': now,
+            };
+
+            // Set actual end time when completing an event
+            if (status == EventStatus.completed) {
+              updateData['actualEndTime'] = now;
+            }
+
+            return event.copyWith(
+              status: status,
+              updatedAt: now,
+              actualEndTime: status == EventStatus.completed
+                  ? now
+                  : event.actualEndTime,
+            );
+          }
+          return event;
+        }).toList();
+        state = state.copyWith(events: updatedEvents);
+        return true;
+      }
     } catch (e) {
       state = state.copyWith(error: e.toString());
+      return false;
     }
+  }
+
+  List<Event> _checkConcurrentEvents(Event newEvent, DateTime currentTime) {
+    return state.events.where((event) {
+      if (event.id == newEvent.id) return false;
+
+      // Check if event is currently ongoing
+      if (event.status != EventStatus.ongoing) return false;
+
+      // Check if events would overlap in time
+      final eventStart = event.actualStartTime ?? event.startTime;
+      final eventEnd = event.endTime;
+
+      if (eventEnd == null) {
+        // Event with no end time is considered ongoing indefinitely
+        return eventStart.isBefore(currentTime) ||
+            eventStart.isAtSameMomentAs(currentTime);
+      }
+
+      // Check if current time falls within the ongoing event's time range
+      return currentTime.isAfter(eventStart) && currentTime.isBefore(eventEnd);
+    }).toList();
   }
 
   void updateEventsFromTimer(List<Event> updatedEvents) {

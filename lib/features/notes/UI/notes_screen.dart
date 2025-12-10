@@ -21,6 +21,15 @@ class _NotesScreenState extends ConsumerState<NotesScreen> {
   bool _isSelectionMode = false;
   Set<String> _selectedNoteIds = {};
 
+  @override
+  void initState() {
+    super.initState();
+    // Load notes when screen is first created
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      ref.read(notesProvider.notifier).loadNotes();
+    });
+  }
+
   void _toggleSelectionMode() {
     setState(() {
       _isSelectionMode = !_isSelectionMode;
@@ -395,46 +404,48 @@ class _NotesScreenState extends ConsumerState<NotesScreen> {
   Widget _buildEmptyState(BuildContext context) {
     final theme = Theme.of(context);
 
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(32),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(
-              Icons.note_outlined,
-              size: 80,
-              color: theme.colorScheme.primary.withOpacity(0.3),
-            ),
-            const SizedBox(height: 16),
-            Text(
-              'No Notes Available',
-              style: theme.textTheme.headlineSmall?.copyWith(
-                fontWeight: FontWeight.w600,
+    return SingleChildScrollView(
+      child: Center(
+        child: Padding(
+          padding: const EdgeInsets.all(32),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(
+                Icons.note_outlined,
+                size: 80,
+                color: theme.colorScheme.primary.withOpacity(0.3),
               ),
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'You haven\'t created any notes yet. Tap the button below to get started.',
-              style: theme.textTheme.bodyMedium?.copyWith(
-                color: theme.textTheme.bodyMedium?.color?.withOpacity(0.7),
+              const SizedBox(height: 16),
+              Text(
+                'No Notes Available',
+                style: theme.textTheme.headlineSmall?.copyWith(
+                  fontWeight: FontWeight.w600,
+                ),
+                textAlign: TextAlign.center,
               ),
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 24),
-            ElevatedButton.icon(
-              onPressed: () => AppNavigation.goToAddNote(context),
-              icon: const Icon(Icons.add),
-              label: const Text('Create Note'),
-              style: ElevatedButton.styleFrom(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 24,
-                  vertical: 12,
+              const SizedBox(height: 8),
+              Text(
+                'You haven\'t created any notes yet. Tap the button below to get started.',
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: theme.textTheme.bodyMedium?.color?.withOpacity(0.7),
+                ),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 24),
+              ElevatedButton.icon(
+                onPressed: () => AppNavigation.goToAddNote(context),
+                icon: const Icon(Icons.add),
+                label: const Text('Create Note'),
+                style: ElevatedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 24,
+                    vertical: 12,
+                  ),
                 ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
